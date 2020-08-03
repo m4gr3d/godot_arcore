@@ -50,217 +50,7 @@
 	ARCore interface between Android and Godot
 **/
 
-StringName ARCoreInterface::get_name() const {
-	return "ARCore";
-}
-
-int ARCoreInterface::get_capabilities() const {
-	return ARVRInterface::ARVR_MONO + ARVRInterface::ARVR_AR;
-}
-
-int ARCoreInterface::get_camera_feed_id() {
-	if (feed.is_valid()) {
-		return feed->get_id();
-	} else {
-		return 0;
-	}
-}
-
-void ARCoreInterface::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("_resume"), &ARCoreInterface::_resume);
-	ClassDB::bind_method(D_METHOD("_pause"), &ARCoreInterface::_pause);
-}
-
-bool ARCoreInterface::is_initialized() const {
-	// if we're in the process of initialising we treat this as initialised...
-	return (init_status != NOT_INITIALISED) && (init_status != INITIALISE_FAILED);
-}
-
-void ARCoreInterface::_resume() {
-	if (init_status == INITIALISED && ar_session != NULL) {
-		ArStatus status = ArSession_resume(ar_session);
-		if (status != AR_SUCCESS) {
-			print_line("Godot ARCore: Failed to resume.");
-
-			// TODO quit? how?
-		}
-	}
-}
-
-void ARCoreInterface::_pause() {
-	if (ar_session != NULL) {
-		ArSession_pause(ar_session);
-	}
-}
-
-void ARCoreInterface::notification(int p_what) {
-	// Needs testing, this should now be called
-
-	ARVRServer *arvr_server = ARVRServer::get_singleton();
-	ERR_FAIL_NULL(arvr_server);
-
-	switch (p_what) {
-		case MainLoop::NOTIFICATION_APP_RESUMED: {
-			if (is_initialized()) {
-				_resume();
-
-				if (init_status == INITIALISE_FAILED) {
-					arvr_server->clear_primary_interface_if(this);
-				}
-			}
-		}; break;
-		case MainLoop::NOTIFICATION_APP_PAUSED:
-			if (is_initialized()) {
-				_pause();
-			}
-			break;
-		default:
-			break;
-	}
-}
-
-bool ARCoreInterface::initialize() {
-	// TODO we may want to check for status PAUZED and just call resume (if we decide to implement that)
-
-	ARVRServer *arvr_server = ARVRServer::get_singleton();
-	ERR_FAIL_NULL_V(arvr_server, false);
-
-	if (init_status == INITIALISE_FAILED) {
-		// if we fully failed last time, don't try again..
-		return false;
-	} else if (init_status == NOT_INITIALISED) {
-		print_line("Godot ARCore: Initialising...");
-		init_status = START_INITIALISE;
-
-		// create our camera feed
-		if (feed.is_null()) {
-			print_line("Godot ARCore: Creating camera feed...");
-
-			feed.instance();
-			feed->set_name("ARCore");
-			feed->set_active(true);
-
-			CameraServer *cs = CameraServer::get_singleton();
-			if (cs != NULL) {
-				cs->add_feed(feed);
-
-				print_line("Godot ARCore: Feed " + itos(feed->get_id()) + " added");
-			}
-		}
-
-		if (ar_session == NULL) {
-			OS_Android *os_android = (OS_Android *)OS::get_singleton();
-
-			print_line("Godot ARCore: Getting environment");
-
-			// get some android things
-			JNIEnv *env = ThreadAndroid::get_env();
-
-			godot_java = os_android->get_godot_java();
-			jobject context = godot_java->get_activity();
-			if (context == NULL) {
-				print_line("Godot ARCore: Couldn't get context");
-				init_status = INITIALISE_FAILED; // don't try again.
-				return false;
-			}
-
-			print_line("Godot ARCore: Create ArSession");
-
-			if (ArSession_create(env, context, &ar_session) != AR_SUCCESS || ar_session == NULL) {
-				print_line("Godot ARCore: ARCore couldn't be created.");
-				init_status = INITIALISE_FAILED; // don't try again.
-				return false;
-			}
-
-			print_line("Godot ARCore: Create ArFrame.");
-
-			ArFrame_create(ar_session, &ar_frame);
-			if (ar_frame == NULL) {
-				print_line("Godot ARCore: Frame couldn't be created.");
-
-				ArSession_destroy(ar_session);
-				ar_session = NULL;
-
-				init_status = INITIALISE_FAILED; // don't try again.
-				return false;
-			}
-
-			// Get our size, make sure we have these in portrait
-			Size2 size = OS::get_singleton()->get_window_size();
-			if (size.x > size.y) {
-				width = size.y;
-				height = size.x;
-			} else {
-				width = size.x;
-				height = size.y;
-			}
-
-			// Trigger display rotation
-			display_rotation = -1;
-
-			print_line("Godot ARCore: Initialised.");
-			init_status = INITIALISED;
-		}
-
-		// and call resume for the first time to complete this
-		_resume();
-
-		if (init_status != INITIALISE_FAILED) {
-			// make this our primary interface
-			arvr_server->set_primary_interface(this);
-
-			// make sure our feed is marked as active if we already have one...
-			if (feed != NULL) {
-				feed->set_active(true);
-			}
-		}
-	}
-
-	return is_initialized();
-}
-
-void ARCoreInterface::uninitialize() {
-	if (is_initialized()) {
-		// TODO we may want to call ArSession_pauze here and introduce a new status PAUZED
-		// then move cleanup to our destruct.
-
-		make_anchors_stale();
-		remove_stale_anchors();
-
-		if (ar_session != NULL) {
-			ArSession_destroy(ar_session);
-			ArFrame_destroy(ar_frame);
-
-			ar_session = NULL;
-			ar_frame = NULL;
-		}
-
-		if (feed.is_valid()) {
-			feed->set_active(false);
-
-			CameraServer *cs = CameraServer::get_singleton();
-			if (cs != NULL) {
-				cs->remove_feed(feed);
-			}
-			feed.unref();
-			camera_texture_id = 0;
-		}
-
-		init_status = NOT_INITIALISED;
-	}
-}
-
-Size2 ARCoreInterface::get_render_targetsize() {
-	_THREAD_SAFE_METHOD_
-
-	Size2 target_size = OS::get_singleton()->get_window_size();
-
-	return target_size;
-}
-
-bool ARCoreInterface::is_stereo() {
-	return false;
-}
+namespace gdarcore {
 
 Transform ARCoreInterface::get_transform_for_eye(ARVRInterface::Eyes p_eye, const Transform &p_cam_transform) {
 	_THREAD_SAFE_METHOD_
@@ -322,28 +112,6 @@ const GLfloat kVertices[] = {
 	1.0f,
 	1.0f,
 };
-
-void ARCoreInterface::make_anchors_stale() {
-	for (int i = 0; i < anchors.size(); i++) {
-		anchors.getv(i)->stale = true;
-	}
-}
-
-void ARCoreInterface::remove_stale_anchors() {
-	// back to forth so when we remove entries we don't screw up...
-	for (int i = anchors.size() - 1; i >= 0; i--) {
-		ArPlane *ar_plane = anchors.getk(i);
-		anchor_map *am = anchors.getv(i);
-		if (am->stale) {
-			anchors.erase(ar_plane); // no erase on i?
-
-			ARVRServer::get_singleton()->remove_tracker(am->tracker);
-			memdelete(am->tracker);
-			memdelete(am);
-			ArTrackable_release(ArAsTrackable(ar_plane));
-		}
-	}
-}
 
 void ARCoreInterface::process() {
 	_THREAD_SAFE_METHOD_
@@ -615,7 +383,7 @@ void ARCoreInterface::process() {
 					// TODO should now get the polygon data and build our mesh
 				}
 			} else {
-				print_line(String("Godot ARCore: huh? I thought we were tracking plane ") + String::num_int64(i));				
+				print_line(String("Godot ARCore: huh? I thought we were tracking plane ") + String::num_int64(i));
 			}
 		}
 
@@ -650,3 +418,5 @@ ARCoreInterface::~ARCoreInterface() {
 		uninitialize();
 	}
 }
+
+}  // namespace gdarcore

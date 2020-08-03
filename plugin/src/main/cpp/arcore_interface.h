@@ -42,6 +42,7 @@
 	ARCore interface between Android and Godot
 **/
 
+namespace gdarcore {
 namespace {
 using namespace godot;
 }
@@ -79,42 +80,18 @@ private:
 	float z_near, z_far;
 	bool have_display_transform;
 
-	struct anchor_map {
-		ARVRPositionalTracker *tracker;
-		bool stale;
-	};
-
-	VMap<ArPlane *, anchor_map *> anchors;
-	void make_anchors_stale();
-	void remove_stale_anchors();
-
 protected:
-	static void _bind_methods();
 
 public:
-	void _resume();
-	void _pause();
 
-	virtual StringName get_name() const;
-	virtual int get_capabilities() const;
-
-	virtual int get_camera_feed_id();
-
-	virtual bool is_initialized() const;
-	virtual bool initialize();
-	virtual void uninitialize();
-
-	virtual Size2 get_render_targetsize();
-	virtual bool is_stereo();
-	virtual Transform get_transform_for_eye(ARVRInterface::Eyes p_eye, const Transform &p_cam_transform);
 	virtual CameraMatrix get_projection_for_eye(ARVRInterface::Eyes p_eye, real_t p_aspect, real_t p_z_near, real_t p_z_far);
 	virtual void commit_for_eye(ARVRInterface::Eyes p_eye, RID p_render_target, const Rect2 &p_screen_rect);
 
 	virtual void process();
-	virtual void notification(int p_what);
 
 	ARCoreInterface();
 	~ARCoreInterface();
 };
+}  // namespace gdarcore
 
 #endif /* !ARCORE_INTERFACE_H */
